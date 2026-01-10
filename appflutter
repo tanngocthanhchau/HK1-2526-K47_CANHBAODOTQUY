@@ -1,1 +1,1506 @@
 
+1- pubspec.yaml
+###########
+name: theodoisuckhoenopcuoimon
+description: "A new Flutter project for health tracking."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0' # Đảm bảo tương thích với các phiên bản Dart mới (sửa từ 3.10.1 để rộng hơn)
+
+# Dependencies specify other packages that your package needs in order to work.
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  fl_chart: ^0.67.0  # Cập nhật phiên bản mới nhất để hỗ trợ tốt hơn
+  provider: ^6.1.2
+  intl: ^0.19.0
+  shared_preferences: ^2.3.2  # Cập nhật phiên bản mới nhất
+  web_socket_channel: ^3.0.1  # Cập nhật phiên bản mới nhất
+  table_calendar: ^3.1.2
+  url_launcher: ^6.3.0  # Cập nhật phiên bản mới nhất
+  path_provider: ^2.1.4  # Cập nhật phiên bản mới nhất
+  
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0  # Cập nhật phiên bản mới nhất
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/logo_hitu.png
+###########################################
+
+2- main.dart
+import 'package:flutter/material.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'health_data.dart'; // Đảm bảo import đúng file dữ liệu
+import 'screens/login_screen.dart';
+
+void main() async {
+  // 1. Đảm bảo các dịch vụ hệ thống sẵn sàng
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 2. Khởi tạo định dạng ngày tháng tiếng Việt
+  await initializeDateFormatting('vi_VN', null);
+  
+  // 3. Tải dữ liệu từ bộ nhớ máy (History, Contacts, Thresholds)
+  await loadData(); 
+  
+  runApp(const HealthApp());
+}
+
+class HealthApp extends StatelessWidget {
+  const HealthApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Health Monitoring',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1F4E79)),
+      ),
+      // Màn hình khởi đầu là trang Đăng nhập
+      home: const HealthcareLoginPage(), 
+    );
+  }
+}
+
+#######################
+3-health_data
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/foundation.dart'; // Thêm để sử dụng ValueNotifier
+
+class HealthRecord {
+  final DateTime time;
+  final double hr;
+  final double spo2;
+  final String status;
+  final bool isAlert;
+
+  HealthRecord({required this.time, required this.hr, required this.spo2, required this.status, this.isAlert = false});
+
+  Map<String, dynamic> toJson() => {'time': time.toIso8601String(), 'hr': hr, 'spo2': spo2, 'status': status, 'isAlert': isAlert};
+  factory HealthRecord.fromJson(Map<String, dynamic> json) => HealthRecord(
+    time: DateTime.parse(json['time']),
+    hr: json['hr'].toDouble(),
+    spo2: json['spo2'].toDouble(),
+    status: json['status'],
+    isAlert: json['isAlert'] ?? false,
+  );
+}
+
+class EmergencyContact {
+  final String name;
+  final String phone;
+  EmergencyContact({required this.name, required this.phone});
+  Map<String, dynamic> toJson() => {'name': name, 'phone': phone};
+  factory EmergencyContact.fromJson(Map<String, dynamic> json) => EmergencyContact(name: json['name'], phone: json['phone']);
+}
+
+// Dữ liệu toàn cục
+List<HealthRecord> globalHealthHistory = []; 
+ValueNotifier<List<HealthRecord>> healthHistoryNotifier = ValueNotifier(globalHealthHistory); // Thêm notifier cho lịch sử sức khỏe
+
+List<EmergencyContact> emergencyContacts = [EmergencyContact(name: "Người thân", phone: "0901234567")];
+ValueNotifier<List<EmergencyContact>> emergencyContactsNotifier = ValueNotifier(emergencyContacts); // Thêm notifier cho danh bạ khẩn cấp (nếu cần liên kết với trang khác)
+
+double hrThreshold = 100.0;
+double spo2Threshold = 95.0;
+
+// Các hàm xử lý
+Future<void> saveData() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setStringList('history', globalHealthHistory.map((e) => jsonEncode(e.toJson())).toList());
+  await prefs.setStringList('contacts', emergencyContacts.map((e) => jsonEncode(e.toJson())).toList());
+  await prefs.setDouble('hr_limit', hrThreshold);
+  await prefs.setDouble('spo2_limit', spo2Threshold);
+}
+
+Future<void> loadData() async {
+  final prefs = await SharedPreferences.getInstance();
+  List<String>? history = prefs.getStringList('history');
+  if (history != null) {
+    globalHealthHistory = history.map((e) => HealthRecord.fromJson(jsonDecode(e))).toList();
+    healthHistoryNotifier.value = globalHealthHistory; // Cập nhật notifier sau khi load
+  }
+  List<String>? contacts = prefs.getStringList('contacts');
+  if (contacts != null) {
+    emergencyContacts = contacts.map((e) => EmergencyContact.fromJson(jsonDecode(e))).toList();
+    emergencyContactsNotifier.value = emergencyContacts; // Cập nhật notifier
+  }
+  hrThreshold = prefs.getDouble('hr_limit') ?? 100.0;
+  spo2Threshold = prefs.getDouble('spo2_limit') ?? 95.0;
+}
+
+// Sửa lỗi Undefined addContact
+void addContact(String name, String phone) {
+  if (name.isNotEmpty && phone.isNotEmpty) {
+    emergencyContacts.add(EmergencyContact(name: name, phone: phone));
+    emergencyContactsNotifier.value = List.from(emergencyContacts); // Cập nhật notifier để notify các trang khác (nếu dùng)
+    saveData(); // Sao lưu ngay lập tức
+  }
+}
+####################################
+4-login
+import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart'; 
+import 'main_screen.dart';   
+import 'signup_screen.dart'; 
+
+class HealthcareLoginPage extends StatefulWidget {
+  const HealthcareLoginPage({super.key});
+
+  @override
+  State<HealthcareLoginPage> createState() => _HealthcareLoginPageState();
+}
+
+class _HealthcareLoginPageState extends State<HealthcareLoginPage> {
+  final _formKey = GlobalKey<FormState>();
+  final TextEditingController _userController = TextEditingController();
+  final TextEditingController _passController = TextEditingController();
+
+  void _submitLogin() {
+    if (_formKey.currentState!.validate()) {
+      try {
+        final channel = WebSocketChannel.connect(
+          Uri.parse('ws://192.168.4.1/ws'),
+        );
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MainScreen(channel: channel),
+          ),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi kết nối thiết bị: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _userController.dispose();
+    _passController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const primaryColor = Color(0xFF1F4E79);
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 30),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // --- PHẦN ĐẦU: LOGO VÀ TÊN TRƯỜNG (CĂN GIỮA) ---
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Image.asset(
+                        'assets/logo_hitu.png',
+                        width: 60,
+                        height: 60,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) => 
+                            const Icon(Icons.school, size: 50, color: primaryColor),
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center, 
+                          children: [
+                            Text(
+                              'TRƯỜNG CAO ĐẲNG CÔNG THƯƠNG TP.HCM',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: primaryColor),
+                            ),
+                            Text(
+                              'KHOA ĐIỆN - ĐIỆN TỬ',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: primaryColor),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 10),
+                  const Divider(thickness: 1.5, color: primaryColor, indent: 20, endIndent: 20),
+                  const SizedBox(height: 15),
+
+                  // --- TÊN MÔN HỌC & ĐỀ TÀI (CĂN GIỮA) ---
+                  const Text(
+                    'LẬP TRÌNH IOT',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, letterSpacing: 1),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'THEO DÕI SỨC KHỎE',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      color: primaryColor,
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 35),
+
+                  // --- THÔNG TIN SINH VIÊN & GIÁO VIÊN (CĂN GIỮA) ---
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: primaryColor.withOpacity(0.1)),
+                    ),
+                    child: const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'SINH VIÊN THỰC HIỆN:',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: primaryColor),
+                        ),
+                        SizedBox(height: 5),
+                        Text('TÂN NGỌC THANH CHÂU - 2123060038', textAlign: TextAlign.center),
+                        Text('HOÀNG NGỌC BỘ - 2123060025', textAlign: TextAlign.center),
+                        SizedBox(height: 15),
+                        Text(
+                          'GIÁO VIÊN HƯỚNG DẪN:',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: primaryColor),
+                        ),
+                        SizedBox(height: 5),
+                        Text('NGUYỄN KIM SUYÊN', textAlign: TextAlign.center),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 40),
+
+                  // --- PHẦN ĐĂNG NHẬP ---
+                  const Text(
+                    'ĐĂNG NHẬP HỆ THỐNG',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12),
+                  ),
+                  const SizedBox(height: 15),
+                  
+                  // Ô TÀI KHOẢN (Đã bỏ căn giữa văn bản)
+                  TextFormField(
+                    controller: _userController,
+                    textAlign: TextAlign.start, // Căn lề trái theo yêu cầu
+                    decoration: const InputDecoration(
+                      hintText: 'Tài khoản',
+                      prefixIcon: Icon(Icons.person, color: primaryColor),
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) => v!.isEmpty ? 'Vui lòng nhập tài khoản' : null,
+                  ),
+                  const SizedBox(height: 15),
+                  
+                  // Ô MẬT KHẨU (Đã bỏ căn giữa văn bản)
+                  TextFormField(
+                    controller: _passController,
+                    obscureText: true,
+                    textAlign: TextAlign.start, // Căn lề trái theo yêu cầu
+                    decoration: const InputDecoration(
+                      hintText: 'Mật khẩu',
+                      prefixIcon: Icon(Icons.lock, color: primaryColor),
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) => v!.length < 6 ? 'Mật khẩu phải trên 6 ký tự' : null,
+                  ),
+                  const SizedBox(height: 25),
+
+                  // Nút Đăng nhập
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: _submitLogin,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        elevation: 3,
+                      ),
+                      child: const Text('ĐĂNG NHẬP', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ),
+
+                  // Nút Đăng ký
+                  TextButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const HealthcareSignUpPage()),
+                      );
+                    },
+                    child: const Text(
+                      "Chưa có tài khoản? Đăng ký ngay",
+                      style: TextStyle(fontWeight: FontWeight.bold, color: primaryColor),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+###############################
+5-sing up
+import 'package:flutter/material.dart';
+
+class HealthcareSignUpPage extends StatefulWidget {
+  const HealthcareSignUpPage({super.key});
+
+  @override
+  State<HealthcareSignUpPage> createState() => _HealthcareSignUpPageState();
+}
+
+class _HealthcareSignUpPageState extends State<HealthcareSignUpPage> {
+  final _formKey = GlobalKey<FormState>();
+  final TextEditingController _passController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _userController = TextEditingController();
+
+  void _submitSignUp() {
+    if (_formKey.currentState!.validate()) {
+      // Logic giả lập đăng ký thành công
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đăng ký thành công! Vui lòng đăng nhập.'), 
+          backgroundColor: Colors.green
+        ),
+      );
+      Navigator.pop(context); // Quay lại trang đăng nhập
+    }
+  }
+
+  @override
+  void dispose() {
+    _passController.dispose();
+    _nameController.dispose();
+    _userController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const primaryColor = Color(0xFF1F4E79);
+
+    return Scaffold(
+      // AppBar đơn giản để quay lại
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: primaryColor),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Container(
+        width: double.infinity,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 10),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                // --- PHẦN THÔNG TIN TRƯỜNG (Giống trang Login) ---
+                const Text(
+                  'TRƯỜNG CAO ĐẲNG CÔNG THƯƠNG TP.HCM',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: primaryColor),
+                ),
+                const Text(
+                  'KHOA ĐIỆN - ĐIỆN TỬ',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: primaryColor),
+                ),
+                const SizedBox(height: 10),
+                const Divider(thickness: 1, color: primaryColor),
+                const SizedBox(height: 10),
+
+                const Text(
+                  'HỆ THỐNG ĐĂNG KÝ',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, letterSpacing: 1.2),
+                ),
+                const Text(
+                  'THEO DÕI SỨC KHỎE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: primaryColor,
+                  ),
+                ),
+                const SizedBox(height: 30),
+
+                // --- PHẦN FORM NHẬP THÔNG TIN ---
+                TextFormField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Họ và tên',
+                    prefixIcon: Icon(Icons.badge, color: primaryColor),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) => v!.isEmpty ? 'Vui lòng nhập họ tên' : null,
+                ),
+                const SizedBox(height: 15),
+                TextFormField(
+                  controller: _userController,
+                  decoration: const InputDecoration(
+                    labelText: 'Tên đăng nhập',
+                    prefixIcon: Icon(Icons.person_add, color: primaryColor),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) => v!.isEmpty ? 'Vui lòng nhập user' : null,
+                ),
+                const SizedBox(height: 15),
+                TextFormField(
+                  controller: _passController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Mật khẩu',
+                    prefixIcon: Icon(Icons.lock_outline, color: primaryColor),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) => v!.length < 6 ? 'Mật khẩu ít nhất 6 ký tự' : null,
+                ),
+                const SizedBox(height: 15),
+                TextFormField(
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Nhập lại mật khẩu',
+                    prefixIcon: Icon(Icons.lock_reset, color: primaryColor),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) {
+                    if (v != _passController.text) return 'Mật khẩu không khớp';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 30),
+
+                // --- NÚT HOÀN TẤT ---
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _submitSignUp,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    child: const Text(
+                      "HOÀN TẤT ĐĂNG KÝ",
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+                
+                // --- THÔNG TIN SINH VIÊN (Nhắc lại nhẹ nhàng ở cuối) ---
+                const Text(
+                  "SVTH: Châu - Bộ | GVHD: Suyên",
+                  style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
+                ),
+                
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text(
+                    "Đã có tài khoản? Quay lại Đăng nhập",
+                    style: TextStyle(color: primaryColor, fontWeight: FontWeight.bold),
+                  ),
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+#############################################
+6-main_scream
+import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'dart:convert';
+import 'home_page.dart';
+import 'settings_page.dart';
+import 'phone_settings_page.dart';
+import 'history_page.dart';
+import 'login_screen.dart';
+import '../health_data.dart';
+
+class MainScreen extends StatefulWidget {
+  final WebSocketChannel channel;
+  const MainScreen({super.key, required this.channel});
+
+  @override
+  State<MainScreen> createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> {
+  int _selectedIndex = 0;
+  late Stream broadcastStream;
+  DateTime? _lastSaveTime;
+
+  @override
+  void initState() {
+    super.initState();
+    loadData(); // Load dữ liệu từ SharedPreferences khi khởi động
+    broadcastStream = widget.channel.stream.asBroadcastStream();
+
+    // --- LOGIC LẮNG NGHE VÀ LƯU DỮ LIỆU TỰ ĐỘNG ---
+    broadcastStream.listen((rawData) {
+      _processIncomingData(rawData);
+    });
+  }
+
+  void _processIncomingData(dynamic rawData) {
+    try {
+      // Giả sử ESP32 gửi JSON: {"hr": 80, "spo2": 98, "status": "Bình thường"}
+      final data = jsonDecode(rawData);
+      double currentHr = (data['hr'] ?? 0).toDouble();
+      double currentSpo2 = (data['spo2'] ?? 0).toDouble();
+      String currentStatus = data['status'] ?? "N/A";
+
+      DateTime now = DateTime.now();
+      bool isAlert = currentHr > hrThreshold || currentSpo2 < spo2Threshold;
+
+      // 1. Lưu định kỳ mỗi 2 phút (sửa từ 'minutes' để chính xác)
+      if (_lastSaveTime == null || now.difference(_lastSaveTime!).inMinutes >= 2) {
+        _addNewRecord(currentHr, currentSpo2, currentStatus, false);
+        _lastSaveTime = now;
+      }
+
+      // 2. Lưu ngay lập tức nếu có CẢNH BÁO
+      if (isAlert) {
+        _addNewRecord(currentHr, currentSpo2, currentStatus, true);
+      }
+    } catch (e) {
+      debugPrint("Lỗi xử lý dữ liệu từ ESP32: $e");
+    }
+  }
+
+  void _addNewRecord(double hr, double spo2, String status, bool isAlert) {
+    setState(() {
+      globalHealthHistory.insert(0, HealthRecord(
+        time: DateTime.now(),
+        hr: hr,
+        spo2: spo2,
+        status: status,
+        isAlert: isAlert,
+      ));
+      healthHistoryNotifier.value = globalHealthHistory; // Notify để HistoryPage update
+    });
+    saveData(); // Lưu vào SharedPreferences ngay lập tức
+  }
+
+  void _logout() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Xác nhận"),
+        content: const Text("Bạn có chắc chắn muốn đăng xuất không?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Hủy")),
+          TextButton(
+            onPressed: () {
+              widget.channel.sink.close();
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const HealthcareLoginPage()),
+                (route) => false,
+              );
+            },
+            child: const Text("Đăng xuất", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const primaryColor = Color(0xFF1F4E79);
+    final List<Widget> pages = [
+      HomePage(stream: broadcastStream),
+      SettingsScreen(channel: widget.channel),
+      const PhoneSettingsPage(),
+      const HistoryPage(),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("THEO DÕI SỨC KHỎE", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(icon: const Icon(Icons.logout), onPressed: _logout),
+        ],
+      ),
+      body: pages[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (index) => setState(() => _selectedIndex = index),
+        selectedItemColor: primaryColor,
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Trang Chủ'),
+          BottomNavigationBarItem(icon: Icon(Icons.tune), label: 'Thông Số'),
+          BottomNavigationBarItem(icon: Icon(Icons.contact_phone), label: 'Liên Hệ'),
+          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Lịch Sử'),
+        ],
+      ),
+    );
+  }
+}
+
+############################################################
+7-home_screen
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+
+class HomePage extends StatefulWidget {
+  final Stream stream;
+  const HomePage({super.key, required this.stream});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  // --- BIẾN TRẠNG THÁI ---
+  List<FlSpot> hrSpots = [];
+  double currentHR = 0, currentSPO2 = 0, currentG = 0;
+  String motionStatus = "ĐANG ĐỢI...";
+  double timeX = 0;
+  bool isAlerting = false;
+
+  // --- LOGIC NHẢY SÓNG (ECG SIMULATION) ---
+  void _addPoint(double value) {
+    timeX += 1;
+    hrSpots.add(FlSpot(timeX, value));
+    // Giữ 60 điểm để sóng hiển thị đủ dài trên lưới
+    if (hrSpots.length > 60) hrSpots.removeAt(0);
+  }
+
+  // Tạo cụm sóng P-QRS-T dựa trên chỉ số BPM nhận được
+  void _createHeartBeatWave(double hr) {
+    if (hr <= 0) {
+      for (int i = 0; i < 5; i++) _addPoint(0);
+      return;
+    }
+    // Mô phỏng 1 nhịp: Baseline -> P -> QRS (Đỉnh nhọn) -> T -> Baseline (Ngắt)
+    _addPoint(0);             // Đường nền
+    _addPoint(hr * 0.15);     // Sóng P nhỏ
+    _addPoint(0);             // Về nền
+    _addPoint(hr * 1.3);      // ĐỈNH R (Vọt lên cao nhất)
+    _addPoint(-15);           // Sóng S (Hạ thấp xuống)
+    _addPoint(hr * 0.3);      // Sóng T
+    for (int i = 0; i < 4; i++) _addPoint(0); // Khoảng nghỉ ngắt nhịp
+  }
+
+  // --- HÀM XỬ LÝ DỮ LIỆU ĐÃ ĐỒNG BỘ JSON VỚI ESP32 ---
+  void _handleIncomingData(String rawData) {
+    try {
+      Map<String, dynamic> data = jsonDecode(rawData);
+
+      if (data['type'] == 'DATA') {
+        setState(() {
+          currentHR = (data['hr'] as num).toDouble();
+          currentSPO2 = (data['spo2'] as num).toDouble();
+          currentG = (data['g'] as num).toDouble();
+          motionStatus = data['motion'].toString();
+
+          // Thay vì thêm 1 điểm, ta tạo cả một cụm sóng nhấp nhô
+          _createHeartBeatWave(currentHR);
+        });
+      } 
+      else if (data['type'] == 'ALERT') {
+        if (!isAlerting) {
+          _showSOSDialog(data['level'] == 'SOS' ? "NHẤN NÚT SOS" : "PHÁT HIỆN BẤT THƯỜNG!");
+        }
+      }
+      else if (data['type'] == 'NO_FINGER') {
+        setState(() {
+          currentHR = 0;
+          currentSPO2 = 0;
+          motionStatus = "CHƯA ĐẶT TAY";
+          _addPoint(0); // Vẽ đường thẳng khi không có tín hiệu
+        });
+      }
+    } catch (e) {
+      debugPrint("Lỗi giải mã JSON: $e");
+    }
+  }
+
+  // --- HÀM HIỂN THỊ CẢNH BÁO SOS ---
+  void _showSOSDialog(String message) {
+    isAlerting = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.red.shade900,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Icon(Icons.warning, color: Colors.white, size: 60),
+        content: Text(
+          "CẢNH BÁO KHẨN CẤP!\n$message",
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+        ),
+        actions: [
+          Center(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white, 
+                foregroundColor: Colors.red.shade900,
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                isAlerting = false;
+              },
+              child: const Text("TÔI ĐÃ ỔN", style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
+      appBar: AppBar(
+        title: const Text("IoT Health Tracker 2026", style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.blueAccent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: StreamBuilder(
+        stream: widget.stream,
+        builder: (context, snapshot) {
+          if (snapshot.hasData) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _handleIncomingData(snapshot.data.toString());
+            });
+          }
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                _buildConnectionStatus(snapshot),
+                
+                GridView.count(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 1.1,
+                  children: [
+                    _buildSmallCard("Nhịp tim", "${currentHR.toStringAsFixed(0)}", "BPM", Colors.red, Icons.favorite),
+                    _buildSmallCard("Oxy (SpO2)", "${currentSPO2.toStringAsFixed(0)}", "%", Colors.blue, Icons.air),
+                    _buildSmallCard("G-Force", currentG.toStringAsFixed(2), "G", Colors.orange, Icons.speed),
+                    _buildSmallCard("Vận động", motionStatus, "", Colors.green, Icons.directions_walk),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+                _buildChartSection(),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSmallCard(String title, String value, String unit, Color color, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 28),
+          const SizedBox(height: 10),
+          Text(title, style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(width: 4),
+              Text(unit, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- BIỂU ĐỒ PHONG CÁCH GIẤY ECG Y TẾ ---
+  Widget _buildChartSection() {
+    return Container(
+      height: 280,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF5F5), // Nền hồng cực nhạt của giấy ECG
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFFFB3B3), width: 2), // Viền hồng đậm
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(15),
+        child: LineChart(
+          LineChartData(
+            minY: -30, maxY: 160,
+            clipData: const FlClipData.all(),
+            gridData: FlGridData(
+              show: true,
+              drawVerticalLine: true,
+              horizontalInterval: 10,
+              verticalInterval: 5,
+              getDrawingHorizontalLine: (value) => FlLine(
+                color: value % 50 == 0 ? const Color(0xFFFF9999) : const Color(0xFFFFE0E0),
+                strokeWidth: value % 50 == 0 ? 1.5 : 0.8,
+              ),
+              getDrawingVerticalLine: (value) => FlLine(
+                color: value % 25 == 0 ? const Color(0xFFFF9999) : const Color(0xFFFFE0E0),
+                strokeWidth: value % 25 == 0 ? 1.5 : 0.8,
+              ),
+            ),
+            titlesData: const FlTitlesData(show: false),
+            borderData: FlBorderData(show: false),
+            lineBarsData: [
+              LineChartBarData(
+                spots: hrSpots,
+                isCurved: true, 
+                color: Colors.blue, // Đường sóng màu xanh dương
+                barWidth: 2.5,
+                isStrokeCapRound: true,
+                dotData: const FlDotData(show: false),
+                belowBarData: BarAreaData(show: false),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectionStatus(AsyncSnapshot snapshot) {
+    bool connected = snapshot.connectionState == ConnectionState.active;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+      margin: const EdgeInsets.only(bottom: 20),
+      decoration: BoxDecoration(
+        color: connected ? Colors.green.shade50 : Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.circle, size: 10, color: connected ? Colors.green : Colors.orange),
+          const SizedBox(width: 10),
+          Text(
+            connected ? "HỆ THỐNG ĐANG HOẠT ĐỘNG" : "ĐANG ĐỢI KẾT NỐI...", 
+            style: TextStyle(color: connected ? Colors.green.shade800 : Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+}
+#####################################
+8-settingpage
+import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Thêm thư viện này
+
+class SettingsScreen extends StatefulWidget {
+  final WebSocketChannel channel;
+  const SettingsScreen({super.key, required this.channel});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  // --- KHỞI TẠO CONTROLLERS (BỎ GIÁ TRỊ MẶC ĐỊNH CỨNG) ---
+  final TextEditingController _hrMaxController = TextEditingController();
+  final TextEditingController _hrMinController = TextEditingController();
+  final TextEditingController _spo2MinController = TextEditingController();
+  final TextEditingController _leadTimeController = TextEditingController(); 
+  final TextEditingController _sensitivityController = TextEditingController();
+  final TextEditingController _standThres = TextEditingController(); 
+  final TextEditingController _walkThres = TextEditingController();   
+  final TextEditingController _runThres = TextEditingController();    
+  final TextEditingController _fallThres = TextEditingController();   
+
+  bool _isFallDetectionEnabled = true;
+  bool _isEarlyWarningEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings(); // Gọi hàm tải dữ liệu ngay khi mở trang
+  }
+
+  // --- HÀM TẢI DỮ LIỆU TỪ BỘ NHỚ ĐIỆN THOẠI ---
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      // Đọc dữ liệu, nếu không có sẽ lấy giá trị mặc định của bạn
+      _hrMaxController.text = prefs.getString('hrMax') ?? '120';
+      _hrMinController.text = prefs.getString('hrMin') ?? '50';
+      _spo2MinController.text = prefs.getString('spo2Min') ?? '94';
+      _leadTimeController.text = prefs.getString('leadTime') ?? '5';
+      _sensitivityController.text = prefs.getString('sensitivity') ?? '10';
+      _standThres.text = prefs.getString('standThres') ?? '1.0';
+      _walkThres.text = prefs.getString('walkThres') ?? '2.5';
+      _runThres.text = prefs.getString('runThres') ?? '5.0';
+      _fallThres.text = prefs.getString('fallThres') ?? '8.0';
+      _isFallDetectionEnabled = prefs.getBool('isFallEn') ?? true;
+      _isEarlyWarningEnabled = prefs.getBool('isEarlyEn') ?? true;
+    });
+  }
+
+  // --- HÀM LƯU DỮ LIỆU VÀ GỬI SANG ESP32 ---
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // 1. Lưu vào điện thoại để không bị mất khi thoát trang
+    await prefs.setString('hrMax', _hrMaxController.text);
+    await prefs.setString('hrMin', _hrMinController.text);
+    await prefs.setString('spo2Min', _spo2MinController.text);
+    await prefs.setString('leadTime', _leadTimeController.text);
+    await prefs.setString('sensitivity', _sensitivityController.text);
+    await prefs.setString('standThres', _standThres.text);
+    await prefs.setString('walkThres', _walkThres.text);
+    await prefs.setString('runThres', _runThres.text);
+    await prefs.setString('fallThres', _fallThres.text);
+    await prefs.setBool('isFallEn', _isFallDetectionEnabled);
+    await prefs.setBool('isEarlyEn', _isEarlyWarningEnabled);
+
+    // 2. Gửi sang ESP32 qua WebSocket (Giữ nguyên logic CSV cũ)
+    final String config = [
+      _hrMaxController.text, _hrMinController.text, _spo2MinController.text,
+      _isEarlyWarningEnabled ? "1" : "0", _leadTimeController.text, _sensitivityController.text,
+      _isFallDetectionEnabled ? "1" : "0",
+      _standThres.text, _walkThres.text, _runThres.text, _fallThres.text
+    ].join(',');
+
+    final String command = "SET_CONFIG:$config";
+    
+    try {
+      widget.channel.sink.add(command);
+      _showSnackBar("Đã lưu và đồng bộ thành công!", Colors.green.shade600);
+    } catch (e) {
+      _showSnackBar("Lỗi kết nối WebSocket!", Colors.red);
+    }
+  }
+
+  @override
+  void dispose() {
+    _hrMaxController.dispose(); _hrMinController.dispose(); _spo2MinController.dispose();
+    _leadTimeController.dispose(); _sensitivityController.dispose();
+    _standThres.dispose(); _walkThres.dispose(); _runThres.dispose(); _fallThres.dispose();
+    super.dispose();
+  }
+
+  // --- GIAO DIỆN (GIỮ NGUYÊN NHƯ BẠN ĐÃ THIẾT KẾ) ---
+  void _showSnackBar(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: color, behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const primaryColor = Color(0xFF1F4E79);
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text("CÀI ĐẶT HỆ THỐNG", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+        centerTitle: true,
+        backgroundColor: Colors.white,
+        foregroundColor: primaryColor,
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSectionTitle("Ngưỡng an toàn sức khỏe"),
+            _buildHealthCard(),
+            const SizedBox(height: 25),
+            _buildSectionTitle("Phân tích xu hướng sớm"),
+            _buildTrendCard(),
+            const SizedBox(height: 25),
+            _buildSectionTitle("Mức độ vận động & Cảnh báo ngã"),
+            _buildMotionCard(primaryColor),
+            const SizedBox(height: 40),
+            _buildSaveButton(primaryColor),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHealthCard() {
+    return _buildBaseCard(
+      child: Column(
+        children: [
+          _buildRowInput("Nhịp tim tối đa", _hrMaxController, Icons.favorite, Colors.red),
+          const SizedBox(height: 12),
+          _buildRowInput("Nhịp tim tối thiểu", _hrMinController, Icons.favorite_border, Colors.redAccent),
+          const SizedBox(height: 12),
+          _buildRowInput("SpO2 tối thiểu (%)", _spo2MinController, Icons.bloodtype, Colors.blue),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrendCard() {
+    return _buildBaseCard(
+      child: Column(
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text("Báo trước nguy cơ", style: TextStyle(fontWeight: FontWeight.bold)),
+            activeTrackColor: Colors.purple,
+            value: _isEarlyWarningEnabled,
+            onChanged: (val) => setState(() => _isEarlyWarningEnabled = val),
+          ),
+          if (_isEarlyWarningEnabled) ...[
+            _buildRowInput("Báo trước (phút)", _leadTimeController, Icons.timer, Colors.purple),
+            const SizedBox(height: 12),
+            _buildRowInput("Độ nhạy phân tích", _sensitivityController, Icons.speed, Colors.purpleAccent),
+          ]
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMotionCard(Color activeColor) {
+    return _buildBaseCard(
+      child: Column(
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.directions_run, color: Colors.orange),
+            ),
+            title: const Text("Theo dõi vận động", style: TextStyle(fontWeight: FontWeight.bold)),
+            activeTrackColor: activeColor,
+            value: _isFallDetectionEnabled,
+            onChanged: (val) => setState(() => _isFallDetectionEnabled = val),
+          ),
+          if (_isFallDetectionEnabled) ...[
+            const Divider(),
+            _buildMotionInput("Đứng yên (Low)", _standThres, Icons.accessibility),
+            _buildMotionInput("Đi bộ (Mid)", _walkThres, Icons.directions_walk),
+            _buildMotionInput("Chạy (High)", _runThres, Icons.run_circle),
+            _buildMotionInput("Cảnh báo ngã", _fallThres, Icons.warning, isDanger: true),
+          ]
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 5, bottom: 10),
+      child: Text(title.toUpperCase(), style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildBaseCard({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
+      child: child,
+    );
+  }
+
+  Widget _buildRowInput(String label, TextEditingController ctrl, IconData icon, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 12),
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
+        _buildNumberField(ctrl),
+      ],
+    );
+  }
+
+  Widget _buildMotionInput(String label, TextEditingController ctrl, IconData icon, {bool isDanger = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: isDanger ? Colors.red : Colors.blueGrey),
+          const SizedBox(width: 10),
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+          _buildNumberField(ctrl, width: 70),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNumberField(TextEditingController ctrl, {double width = 65}) {
+    return Container(
+      width: width,
+      decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(10)),
+      child: TextField(
+        controller: ctrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        decoration: const InputDecoration(border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 10)),
+      ),
+    );
+  }
+
+  Widget _buildSaveButton(Color color) {
+    return SizedBox(
+      width: double.infinity,
+      height: 55,
+      child: ElevatedButton.icon(
+        onPressed: _saveSettings,
+        icon: const Icon(Icons.save_rounded),
+        label: const Text("CẬP NHẬT TOÀN BỘ", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), elevation: 4),
+      ),
+    );
+  }
+}
+
+#####################################################
+9-phone_setting
+import 'package:flutter/material.dart';
+import '../health_data.dart'; // Import này cực kỳ quan trọng
+
+class PhoneSettingsPage extends StatefulWidget {
+  const PhoneSettingsPage({super.key});
+
+  @override
+  State<PhoneSettingsPage> createState() => _PhoneSettingsPageState();
+}
+
+class _PhoneSettingsPageState extends State<PhoneSettingsPage> {
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7F9),
+      appBar: AppBar(title: const Text("Liên hệ khẩn cấp"), backgroundColor: const Color(0xFF1F4E79), foregroundColor: Colors.white),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: const Color(0xFF1F4E79),
+            child: Column(
+              children: [
+                TextField(controller: _nameController, decoration: const InputDecoration(labelText: "Tên người thân", filled: true, fillColor: Colors.white)),
+                const SizedBox(height: 10),
+                TextField(controller: _phoneController, decoration: const InputDecoration(labelText: "Số điện thoại", filled: true, fillColor: Colors.white), keyboardType: TextInputType.phone),
+                const SizedBox(height: 15),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      addContact(_nameController.text, _phoneController.text); // Gọi hàm từ health_data.dart
+                      _nameController.clear(); _phoneController.clear();
+                    });
+                  },
+                  child: const Text("Thêm Liên Hệ"),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: emergencyContacts.length,
+              itemBuilder: (context, index) => Card(
+                margin: const EdgeInsets.all(8),
+                child: ListTile(
+                  leading: const CircleAvatar(child: Icon(Icons.person)),
+                  title: Text(emergencyContacts[index].name),
+                  subtitle: Text(emergencyContacts[index].phone),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () {
+                      if (emergencyContacts.length > 1) {
+                        setState(() { emergencyContacts.removeAt(index); saveData(); });
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+#####################################
+10-history
+import 'package:flutter/material.dart';
+import 'package:table_calendar/table_calendar.dart';
+import 'package:intl/intl.dart';
+import '../health_data.dart'; // Đảm bảo file này có model HealthRecord và healthHistoryNotifier
+
+class HistoryPage extends StatefulWidget {
+  const HistoryPage({super.key});
+
+  @override
+  State<HistoryPage> createState() => _HistoryPageState();
+}
+
+class _HistoryPageState extends State<HistoryPage> {
+  late DateTime _selectedDay;
+  CalendarFormat _calendarFormat = CalendarFormat.month;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDay = DateTime.now();
+  }
+
+  // --- HÀM LỌC DỮ LIỆU THEO KHOẢNG CÁCH THỜI GIAN ---
+  List<HealthRecord> _filterDataByInterval(List<HealthRecord> source, Duration interval) {
+    if (source.isEmpty) return [];
+    
+    // Sắp xếp dữ liệu theo thời gian tăng dần để lọc chính xác
+    List<HealthRecord> sorted = List.from(source)..sort((a, b) => a.time.compareTo(b.time));
+    List<HealthRecord> filtered = [];
+    
+    DateTime? lastAddedTime;
+
+    for (var record in sorted) {
+      if (lastAddedTime == null || record.time.difference(lastAddedTime) >= interval) {
+        filtered.add(record);
+        lastAddedTime = record.time;
+      }
+    }
+    // Trả về danh sách đảo ngược để dữ liệu mới nhất nằm trên cùng
+    return filtered.reversed.toList();
+  }
+
+  // --- HÀM XÁC ĐỊNH LÝ DO CẢNH BÁO CHI TIẾT ---
+  String _getAlertDetail(HealthRecord item) {
+    // Dựa trên các ngưỡng đã thiết lập trong ESP32
+    if (item.status == "NGA") return "CẢNH BÁO: PHÁT HIỆN NGÃ!";
+    if (item.status == "SOS") return "CẢNH BÁO: NHẤN NÚT SOS!";
+
+    List<String> violations = [];
+    if (item.hr > 120) violations.add("Nhịp tim cao (>120)");
+    if (item.hr < 50 && item.hr > 0) violations.add("Nhịp tim thấp (<50)");
+    if (item.spo2 < 94 && item.spo2 > 0) violations.add("SpO2 thấp (<94%)");
+
+    return violations.isEmpty ? "Cảnh báo sức khỏe" : violations.join("\n");
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<HealthRecord>>(
+      valueListenable: healthHistoryNotifier,
+      builder: (context, history, child) {
+        // 1. Lấy dữ liệu của ngày được chọn
+        final dailyRecords = history.where((r) => isSameDay(r.time, _selectedDay)).toList();
+
+        // 2. Tách và lọc dữ liệu đo (Cách nhau 1 phút)
+        final measureData = _filterDataByInterval(
+          dailyRecords.where((r) => !r.isAlert).toList(),
+          const Duration(minutes: 1),
+        );
+
+        // 3. Tách và lọc cảnh báo (Cách nhau 30 giây)
+        final alertData = _filterDataByInterval(
+          dailyRecords.where((r) => r.isAlert).toList(),
+          const Duration(seconds: 30),
+        );
+
+        return Scaffold(
+          backgroundColor: Colors.white,
+          body: Column(
+            children: [
+              _buildCalendar(),
+              const Divider(height: 1),
+              _buildListHeaders(),
+              Expanded(
+                child: Row(
+                  children: [
+                    // Cột Dữ liệu đo
+                    Expanded(child: _buildMeasureList(measureData)),
+                    const VerticalDivider(width: 1),
+                    // Cột Cảnh báo
+                    Expanded(child: _buildAlertList(alertData)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- WIDGET LỊCH ---
+  Widget _buildCalendar() {
+    return TableCalendar(
+      locale: 'vi_VN',
+      firstDay: DateTime.utc(2025, 1, 1),
+      lastDay: DateTime.utc(2030, 12, 31),
+      focusedDay: _selectedDay,
+      calendarFormat: _calendarFormat,
+      headerStyle: const HeaderStyle(formatButtonVisible: false, titleCentered: true),
+      selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+      onDaySelected: (selectedDay, focusedDay) => setState(() => _selectedDay = selectedDay),
+      onFormatChanged: (format) => setState(() => _calendarFormat = format),
+      calendarStyle: const CalendarStyle(
+        selectedDecoration: BoxDecoration(color: Color(0xFF1F4E79), shape: BoxShape.circle),
+        todayDecoration: BoxDecoration(color: Colors.lightBlueAccent, shape: BoxShape.circle),
+      ),
+    );
+  }
+
+  // --- WIDGET TIÊU ĐỀ CỘT ---
+  Widget _buildListHeaders() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Expanded(child: Center(child: Text("DỮ LIỆU ĐO (1P)", 
+            style: TextStyle(color: Colors.blue.shade800, fontWeight: FontWeight.bold, fontSize: 13)))),
+          Expanded(child: Center(child: Text("CẢNH BÁO (30S)", 
+            style: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.bold, fontSize: 13)))),
+        ],
+      ),
+    );
+  }
+
+  // --- DANH SÁCH DỮ LIỆU ĐO ---
+  Widget _buildMeasureList(List<HealthRecord> list) {
+    if (list.isEmpty) return const Center(child: Text("Trống", style: TextStyle(color: Colors.grey)));
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      itemCount: list.length,
+      itemBuilder: (context, index) {
+        final item = list[index];
+        return Card(
+          color: Colors.blue.shade50,
+          elevation: 0,
+          margin: const EdgeInsets.only(bottom: 6),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              children: [
+                _timeLabel(item.time),
+                const SizedBox(height: 4),
+                Text("${item.hr.toInt()} BPM | ${item.spo2.toInt()}%", 
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                Text(item.status, style: const TextStyle(fontSize: 11, color: Colors.blueGrey)),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // --- DANH SÁCH CẢNH BÁO ---
+  Widget _buildAlertList(List<HealthRecord> list) {
+    if (list.isEmpty) return const Center(child: Text("Trống", style: TextStyle(color: Colors.grey)));
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      itemCount: list.length,
+      itemBuilder: (context, index) {
+        final item = list[index];
+        return Card(
+          color: Colors.red.shade50,
+          elevation: 0,
+          margin: const EdgeInsets.only(bottom: 6),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              children: [
+                _timeLabel(item.time),
+                const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+                const SizedBox(height: 4),
+                Text(
+                  _getAlertDetail(item), // Hiển thị lý do cụ thể vượt ngưỡng
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _timeLabel(DateTime time) => Text(
+    DateFormat('HH:mm:ss').format(time),
+    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black87),
+  );
+}
+####################################################################################
