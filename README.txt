@@ -80,5 +80,5 @@ Thời gian phản hồi SOS: < 100ms
 Giao diện Flutter trực quan (Dashboard + biểu đồ)
 
 OLED hiển thị trực tiếp trên thiết bị
-
+Wifi: ESP32_TheoDoiSucKhoe
 Password: 12345678
